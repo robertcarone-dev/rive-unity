@@ -1318,7 +1318,7 @@ return;
                 return new List<string>();
             }
 
-            return metadata.DefaultViewModel.InstanceNames;
+            return metadata.DefaultViewModel.InstanceNames.ToList();
         }
 
         private string GetInitialViewModelNameForArtboard()
