@@ -52,8 +52,7 @@ namespace Rive
 
         /// <summary>
         /// Material that flips and/or gamma re-encodes an external Unity texture
-        /// before Rive samples it. Null if the shader's missing, so callers should
-        /// fall back to a plain copy.
+        /// and converts it to premultiplied alpha before Rive samples it.
         /// </summary>
         internal static Material TexturePrepareMaterial
         {
@@ -91,12 +90,17 @@ namespace Rive
             }
         }
 
-        internal static bool SupportsRenderTextureImageSource()
+        internal static bool SupportsTextureImageSource()
         {
             return SystemInfo.graphicsDeviceType == GraphicsDeviceType.Metal ||
                    SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D11 ||
                    SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D12 ||
                    SystemInfo.graphicsDeviceType == GraphicsDeviceType.Vulkan;
+        }
+
+        internal static bool SupportsRenderTextureImageSource()
+        {
+            return SupportsTextureImageSource();
         }
 
         /// <summary>
