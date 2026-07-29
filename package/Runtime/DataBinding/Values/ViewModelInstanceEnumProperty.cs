@@ -11,16 +11,18 @@ namespace Rive
     public sealed class ViewModelInstanceEnumProperty : ViewModelInstancePrimitiveProperty<string>
     {
         private string[] m_enumValues;
+        private readonly ViewModelEnumData m_enumData;
 
         /// <summary>
         /// Constructor for the enum property. This is used when the enum values are known ahead of time.
         /// </summary>
         /// <param name="instanceValuePtr"> The pointer to the instance property. </param>
         /// <param name="rootInstance"> The root instance of the view model. </param>
-        /// <param name="enumValues"> The list of enum values. </param>
-        internal ViewModelInstanceEnumProperty(IntPtr instanceValuePtr, ViewModelInstance rootInstance, string[] enumValues) : base(instanceValuePtr, rootInstance)
+        /// <param name="enumData"> The enum definition. </param>
+        internal ViewModelInstanceEnumProperty(IntPtr instanceValuePtr, ViewModelInstance rootInstance, ViewModelEnumData enumData) : base(instanceValuePtr, rootInstance)
         {
-            m_enumValues = enumValues;
+            m_enumData = enumData;
+            m_enumValues = enumData?.ValuesArray;
         }
 
         /// <summary>
@@ -141,6 +143,11 @@ namespace Rive
                 return m_enumValues;
             }
         }
+
+        /// <summary>
+        /// The enum definition associated with this property, or null when the definition is not available from the Rive file.
+        /// </summary>
+        public ViewModelEnumData EnumData => m_enumData;
 
         [DllImport(NativeLibrary.name)]
         private static extern uint getViewModelInstanceEnumIndex(IntPtr instanceProperty);

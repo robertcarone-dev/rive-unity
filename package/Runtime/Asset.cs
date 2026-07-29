@@ -55,49 +55,41 @@ namespace Rive
                 if (propertyData.Type == ViewModelDataType.ViewModel)
                 {
                     // Get the view model name by loading a view model instance and getting the name of the view model
-                    var instance = viewModel.CreateInstance();
-
-                    ViewModelInstance nestedInstance = instance.GetProperty<ViewModelInstance>(propertyData.Name);
-
-                    if (nestedInstance == null)
+                    using (var instance = viewModel.CreateInstance())
+                    using (ViewModelInstance nestedInstance = instance.GetProperty<ViewModelInstance>(propertyData.Name))
                     {
-                        DebugLogger.Instance.LogWarning("Could not find nested view model instance for property " + propertyData.Name);
+                        if (nestedInstance == null)
+                        {
+                            DebugLogger.Instance.LogWarning("Could not find nested view model instance for property " + propertyData.Name);
+                            return new ViewModelPropertyMetadata
+                            {
+                                Name = propertyData.Name,
+                                Type = propertyData.Type
+                            };
+                        }
+
                         return new ViewModelPropertyMetadata
                         {
                             Name = propertyData.Name,
-                            Type = propertyData.Type
+                            Type = propertyData.Type,
+                            NestedViewModelName = nestedInstance.ViewModelName
                         };
                     }
-
-                    string nestedViewModelName = nestedInstance.ViewModelName;
-
-                    nestedInstance.Dispose(); // We don't need the instance anymore
-
-                    return new ViewModelPropertyMetadata
-                    {
-                        Name = propertyData.Name,
-                        Type = propertyData.Type,
-                        NestedViewModelName = nestedViewModelName
-                    };
                 }
                 else if (propertyData.Type == ViewModelDataType.Enum)
                 {
                     // Get the enum name by loading a view model instance and getting the associated enum type.
                     // Unfortunately, we need to do it this way because the native API doesn't expose the enum type name directly from the property data.
-                    var instance = viewModel.CreateInstance();
-
-
-                    var enumType = ViewModelInstancePropertyHandlersFactory.GetEnumForPropertyAtPath(instance, propertyData.Name);
-
-                    instance.Dispose(); // We don't need the instance anymore
-
-                    return new ViewModelPropertyMetadata
+                    using (var instance = viewModel.CreateInstance())
                     {
-                        Name = propertyData.Name,
-                        Type = propertyData.Type,
-                        EnumTypeName = enumType?.Name
-                    };
-
+                        var enumType = ViewModelInstancePropertyHandlersFactory.GetEnumForPropertyAtPath(instance, propertyData.Name);
+                        return new ViewModelPropertyMetadata
+                        {
+                            Name = propertyData.Name,
+                            Type = propertyData.Type,
+                            EnumTypeName = enumType?.Name
+                        };
+                    }
                 }
 
 

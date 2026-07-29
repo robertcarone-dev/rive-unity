@@ -142,6 +142,18 @@ namespace Rive.Components
         private void OnTransformParentChanged()
         {
             CheckContext();
+            m_currentPreview?.SetDirty();
+        }
+
+        private void OnRectTransformDimensionsChange()
+        {
+            m_currentPreview?.SetDirty();
+        }
+
+        private void OnCanvasHierarchyChanged()
+        {
+            CheckContext();
+            m_currentPreview?.SetDirty();
         }
 
         private void OnValidate()

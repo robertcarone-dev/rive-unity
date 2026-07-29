@@ -55,7 +55,10 @@ namespace Rive
 
         internal ViewModelInstanceSafeHandle NativeSafeHandle => m_safeHandle;
 
-        internal string ViewModelName
+        /// <summary>
+        /// The name of the view model this instance was created from.
+        /// </summary>
+        public string ViewModelName
         {
             get
             {

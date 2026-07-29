@@ -987,6 +987,40 @@ namespace Rive.Tests
             Assert.That(receivedEvent.Name, Is.EqualTo(ReportedEventTests.EVENT_SIMPLE));
         }
 
+        [UnityTest]
+        public IEnumerator Reload_RecreatesRuntimeStateAndReusesLoadedFile()
+        {
+            TestAssetData testData = GetTestAssetInfo()[0];
+            Asset riveAsset = null;
+
+            yield return testAssetLoadingManager.LoadAssetCoroutine<Asset>(
+                testData.addressableAssetPath,
+                (asset) => riveAsset = asset,
+                () => Assert.Fail($"Failed to load asset at {testData.addressableAssetPath}")
+            );
+
+            m_widget.Load(riveAsset);
+            yield return null;
+
+            File loadedFile = m_widget.File;
+            Artboard loadedArtboard = m_widget.Artboard;
+            StateMachine loadedStateMachine = m_widget.StateMachine;
+            var statuses = new List<WidgetStatus>();
+            m_widget.OnWidgetStatusChanged += () => statuses.Add(m_widget.Status);
+
+            m_widget.Reload();
+            yield return null;
+
+            Assert.AreSame(loadedFile, m_widget.File, "Reload should reuse the currently loaded file");
+            Assert.AreNotSame(loadedArtboard, m_widget.Artboard, "Reload should recreate the artboard");
+            Assert.AreNotSame(loadedStateMachine, m_widget.StateMachine, "Reload should recreate the state machine");
+            CollectionAssert.AreEqual(
+                new[] { WidgetStatus.Loading, WidgetStatus.Loaded },
+                statuses,
+                "Reload should use the normal widget loading status transitions"
+            );
+        }
+
         [Test]
         public void SpeedProperty_GetSet_WorksCorrectly()
         {

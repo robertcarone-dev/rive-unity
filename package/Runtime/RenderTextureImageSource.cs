@@ -107,6 +107,8 @@ namespace Rive
 
         internal bool IsDisposed => m_disposed;
 
+        internal bool RequiresContinuousUpdates => m_refreshMode == RefreshMode.PerFrame;
+
         /// <param name="source">The RenderTexture to use as the image source. Required.</param>
         /// <exception cref="ArgumentNullException">
         /// Thrown if <paramref name="source"/> is null.
@@ -200,11 +202,11 @@ namespace Rive
         // Called by the manager once per frame for every registered image, right
         // before panels tick. Decides whether a rebuild is wanted, then queues a
         // build (or clear) command on the queue for the render thread to process.
-        internal void Tick(IReadOnlyList<ViewModelInstanceImageProperty> properties, RenderImageCommandQueue queue)
+        internal bool Tick(IReadOnlyList<ViewModelInstanceImageProperty> properties, RenderImageCommandQueue queue)
         {
             if (m_disposed)
             {
-                return;
+                return false;
             }
 
             // In Manual mode nothing else triggers a rebuild, so cheaply poll for
@@ -226,7 +228,7 @@ namespace Rive
 
             if (!rebuild)
             {
-                return;
+                return false;
             }
 
             // The first build, a manual refresh, and a new binding each need one
@@ -244,14 +246,17 @@ namespace Rive
             {
                 queue.EnqueueBuild(
                     m_handle, frame.Handle, frame.Width, frame.Height, frame.IsSRGB, properties);
+                return true;
             }
-            else if (!m_textureProvider.IsSourceAlive)
+            if (!m_textureProvider.IsSourceAlive)
             {
                 // Destroyed/released source: clear the bound properties and drop the image.
                 queue.EnqueueClear(m_handle, properties);
+                return true;
             }
             // Otherwise the source just isn't ready yet (handle still 0); retry next
             // frame without clearing.
+            return false;
         }
 
         public void Dispose()
@@ -536,6 +541,25 @@ namespace Rive
         internal static bool HasAnyBindings =>
             s_instance != null && s_instance.m_bindings.Count > 0;
 
+        internal static bool HasPerFrameBindings
+        {
+            get
+            {
+                if (s_instance == null)
+                {
+                    return false;
+                }
+                for (int i = 0; i < s_instance.m_bindings.Count; i++)
+                {
+                    if (s_instance.m_bindings[i].Image.RequiresContinuousUpdates)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+
         internal int BindingCount => m_bindings.Count;
 
         // Removes an image's binding entry outright (e.g. on explicit Dispose),
@@ -617,12 +641,12 @@ namespace Rive
             }
         }
 
-        internal void Tick()
+        internal bool Tick()
         {
             // Release last tick's freed intermediate textures.
             FlushDeferredReleases();
 
-   
+            bool changed = false;
             if (m_bindings.Count > 0)
             {
                 RenderImageCommandQueue queue = RenderImageCommandQueue.Instance;
@@ -630,7 +654,7 @@ namespace Rive
                 {
                     Binding binding = m_bindings[i];
                     PruneDisposedProperties(binding);
-                    binding.Image.Tick(binding.Properties, queue);
+                    changed |= binding.Image.Tick(binding.Properties, queue);
 
                     if (binding.Properties.Count == 0)
                     {
@@ -646,6 +670,7 @@ namespace Rive
             // Also drains destroys enqueued between frames after the last binding
             // went away.
             RenderImageCommandQueue.FlushIfActive();
+            return changed;
         }
 
         /// <summary>

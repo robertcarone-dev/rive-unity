@@ -240,6 +240,11 @@ namespace Rive.Components
             m_lastPreviewTexture = null;
             m_isUpdating = false;
         }
+
+        protected override void RestoreResources()
+        {
+            CreatePreviewQuad();
+        }
 #endif
     }
 }

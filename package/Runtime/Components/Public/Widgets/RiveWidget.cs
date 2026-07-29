@@ -473,7 +473,38 @@ namespace Rive.Components
         /// </summary>
         public event Action<ReportedEvent> OnRiveEventReported;
 
+#if UNITY_EDITOR
+        internal event Action OnEditorPreviewDirty;
 
+        internal bool TryGetEditorPreviewData(out File file, out StateMachine stateMachine)
+        {
+            return PanelPreview.TryGetWidgetEditorPreviewData(this, out file, out stateMachine);
+        }
+
+        internal void SetEditorPreviewDebugStateDirty()
+        {
+            if (!Application.isPlaying)
+            {
+                PanelPreview.SetWidgetEditorPreviewDebugStateDirty(this);
+            }
+        }
+
+        internal bool RequestEditorPreviewReload()
+        {
+            return !Application.isPlaying && PanelPreview.RequestWidgetEditorPreviewReload(this);
+        }
+
+        /// <summary>
+        /// Requests an editor preview refresh after an external component changes values that it applies through <see cref="IRiveWidgetEditorPreview"/>.
+        /// </summary>
+        public void SetEditorPreviewDirty()
+        {
+            if (!Application.isPlaying)
+            {
+                OnEditorPreviewDirty?.Invoke();
+            }
+        }
+#endif
 
         private Asset m_fileLoadedFromAsset = null;
 
@@ -817,7 +848,7 @@ namespace Rive.Components
         /// <summary>
         /// Internal method to handle loading from either an asset or direct file
         /// </summary>
-        private void LoadInternal(File file, Asset fromAsset = null)
+        private void LoadInternal(File file, Asset fromAsset = null, ViewModelInstance manuallyBoundViewModelInstance = null)
         {
 
             if (file == null)
@@ -834,6 +865,11 @@ namespace Rive.Components
 
             if (result.Success)
             {
+                if (manuallyBoundViewModelInstance != null)
+                {
+                    StateMachine.BindViewModelInstance(manuallyBoundViewModelInstance);
+                }
+
                 SetUpAudioIfNeeded(Controller.Artboard);
                 HandleLoadComplete();
             }
@@ -873,6 +909,25 @@ namespace Rive.Components
             ReleaseFileIfResponsibleForLoading();
 
             LoadInternal(file, null);
+        }
+
+        /// <summary>
+        /// Reloads the current Rive file, recreating the artboard, state machine, and automatically bound view model instance.
+        /// </summary>
+        /// <remarks>
+        /// The currently loaded file is reused and its ownership does not change. Automatically bound view models are recreated, while a manually bound view model is rebound to the new state machine. <see cref="WidgetBehaviour.OnWidgetStatusChanged"/> is triggered as the widget transitions through its normal loading states.
+        /// </remarks>
+        public void Reload()
+        {
+            if (File == null || File.IsDisposed)
+            {
+                Status = WidgetStatus.Error;
+                DebugLogger.Instance.LogError("Attempted to reload a Rive widget without a valid Rive file.");
+                return;
+            }
+
+            ViewModelInstance manuallyBoundViewModelInstance = BindingMode == DataBindingMode.Manual ? StateMachine?.ViewModelInstance : null;
+            LoadInternal(File, m_fileLoadedFromAsset, manuallyBoundViewModelInstance);
         }
 
         /// <summary>
@@ -1112,6 +1167,10 @@ return;
 
         protected override void OnRectTransformDimensionsChange()
         {
+#if UNITY_EDITOR
+            SetEditorPreviewDirty();
+#endif
+
             // Do this before the base call so that the base call can recalculate the widget layout before we tell the panel to redraw
             ResizeArtboardForLayoutIfNeeded();
 
@@ -1150,6 +1209,12 @@ return;
 
 #if UNITY_EDITOR
         // Inspector-specific methods (used for custom inspector logic)
+
+        protected override void OnValidate()
+        {
+            base.OnValidate();
+            SetEditorPreviewDirty();
+        }
 
         /// <summary>
         /// Sets the asset reference in the editor.

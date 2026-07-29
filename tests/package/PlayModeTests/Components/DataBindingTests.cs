@@ -504,6 +504,7 @@ namespace Rive.Tests
 
                 var viewModelInstance = m_widget.StateMachine.ViewModelInstance;
                 Assert.IsNotNull(viewModelInstance, $"ViewModelInstance should exist for asset {testAsset.addressableAssetPath}");
+                Assert.AreEqual(testAsset.defaultArtboardViewModelName, viewModelInstance.ViewModelName, $"ViewModelInstance should report its source view model for asset {testAsset.addressableAssetPath}");
 
 
                 ViewModelInfo viewModelInfo = testAsset.GetDefaultArtboardViewModelInfo();
@@ -554,10 +555,11 @@ namespace Rive.Tests
                     // Find the corresponding enum type definition
                     var enumType = testAsset.enumTypesInFile.FirstOrDefault(et => et.TypeId == enumProp.EnumTypeId);
                     Assert.IsNotNull(enumType, $"Enum type '{enumProp.EnumTypeId}' should be defined for property '{enumProp.PropertyName}'");
+                    Assert.IsNotNull(prop.EnumData, $"Enum property '{enumProp.PropertyName}' should expose its enum definition");
+                    Assert.AreEqual(enumType.TypeId, prop.EnumData.Name);
 
                     // Check that the enum has the expected values
-                    Assert.AreEqual(prop.EnumValues.Count, prop.EnumValues.Count,
-                        $"Enum '{enumProp.PropertyName}' should have {prop.Value.Length} values in {testAsset.addressableAssetPath}");
+                    Assert.AreEqual(enumType.Values.Length, prop.EnumValues.Count, $"Enum '{enumProp.PropertyName}' should have {enumType.Values.Length} values in {testAsset.addressableAssetPath}");
 
                     for (int i = 0; i < prop.EnumValues.Count; i++)
                     {
@@ -4351,6 +4353,62 @@ namespace Rive.Tests
                 Assert.IsNotNull(m_widget.StateMachine.ViewModelInstance,
                     $"ViewModelInstance should be automatically bound in AutoBindDefault mode for asset {testAsset.addressableAssetPath}");
             }
+        }
+
+        [UnityTest]
+        public IEnumerator Reload_AutoBindDefault_CreatesFreshDefaultInstance()
+        {
+            DataBindingTestAsset testAsset = GetTestAssetInfo()[0];
+            Asset riveAsset = null;
+
+            yield return testAssetLoadingManager.LoadAssetCoroutine<Asset>(
+                testAsset.addressableAssetPath,
+                (asset) => riveAsset = asset,
+                () => Assert.Fail($"Failed to load asset at {testAsset.addressableAssetPath}")
+            );
+
+            File riveFile = LoadAndTrackFile(riveAsset);
+            m_widget.BindingMode = Components.RiveWidget.DataBindingMode.AutoBindDefault;
+            m_widget.Load(riveFile, testAsset.defaultArtboardName, testAsset.defaultStateMachineName);
+            yield return new WaitUntil(() => m_widget.Status == WidgetStatus.Loaded);
+
+            ViewModelInstance initialInstance = m_widget.StateMachine.ViewModelInstance;
+            ViewModelInstanceStringProperty nameProperty = initialInstance.GetStringProperty("name");
+            string defaultName = nameProperty.Value;
+            nameProperty.Value = "Changed";
+
+            m_widget.Reload();
+            yield return new WaitUntil(() => m_widget.Status == WidgetStatus.Loaded);
+
+            ViewModelInstance reloadedInstance = m_widget.StateMachine.ViewModelInstance;
+            Assert.AreNotSame(initialInstance, reloadedInstance, "Reload should create a new default view model instance");
+            Assert.AreEqual(defaultName, reloadedInstance.GetStringProperty("name").Value, "Reload should restore the view model's default values");
+        }
+
+        [UnityTest]
+        public IEnumerator Reload_ManualBinding_RebindsExistingInstance()
+        {
+            DataBindingTestAsset testAsset = GetTestAssetInfo()[0];
+            Asset riveAsset = null;
+
+            yield return testAssetLoadingManager.LoadAssetCoroutine<Asset>(
+                testAsset.addressableAssetPath,
+                (asset) => riveAsset = asset,
+                () => Assert.Fail($"Failed to load asset at {testAsset.addressableAssetPath}")
+            );
+
+            File riveFile = LoadAndTrackFile(riveAsset);
+            m_widget.BindingMode = Components.RiveWidget.DataBindingMode.Manual;
+            m_widget.Load(riveFile, testAsset.defaultArtboardName, testAsset.defaultStateMachineName);
+            yield return new WaitUntil(() => m_widget.Status == WidgetStatus.Loaded);
+
+            ViewModelInstance manuallyBoundInstance = m_widget.Artboard.DefaultViewModel.CreateDefaultInstance();
+            m_widget.StateMachine.BindViewModelInstance(manuallyBoundInstance);
+
+            m_widget.Reload();
+            yield return new WaitUntil(() => m_widget.Status == WidgetStatus.Loaded);
+
+            Assert.AreSame(manuallyBoundInstance, m_widget.StateMachine.ViewModelInstance, "Reload should preserve a manually bound view model instance");
         }
 
         [UnityTest]
