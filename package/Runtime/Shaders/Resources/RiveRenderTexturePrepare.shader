@@ -1,11 +1,13 @@
-// Blit shader behind ProcessedTextureSource. In one pass it does the two things
-// a raw Unity texture needs before Rive can use it:
+// Blit shader behind ProcessedTextureFrameProvider. In one pass it prepares
+// a raw Unity texture for Rive:
 //   - _FlipY:       Metal/D3D/Vulkan store texels top-down, so video/camera output
 //                   lands upside-down in a .riv without this.
 //   - _GammaEncode: in Linear projects the sample auto-linearises the source, but
 //                   Rive composites in gamma. Re-encode so it matches; the single
 //                   Rive/UI/Default gamma to linear decode at display then lands it
 //                   back on the right values.
+//   - _PremultiplyAlpha: converts straight-alpha Unity image data to the
+//                        premultiplied representation Rive's image shaders expect.
 // Destination is non-sRGB so the output is stored raw and Rive reads it as-is.
 Shader "Hidden/Rive/RenderTexturePrepare"
 {
@@ -14,6 +16,7 @@ Shader "Hidden/Rive/RenderTexturePrepare"
         _MainTex ("Texture", 2D) = "white" {}
         _FlipY ("Flip Y", Float) = 0
         _GammaEncode ("Gamma Encode", Float) = 0
+        _PremultiplyAlpha ("Premultiply Alpha", Float) = 0
     }
 
     SubShader
@@ -51,6 +54,7 @@ Shader "Hidden/Rive/RenderTexturePrepare"
             sampler2D _MainTex;
             float _FlipY;
             float _GammaEncode;
+            float _PremultiplyAlpha;
 
             v2f vert (appdata v)
             {
@@ -74,6 +78,11 @@ Shader "Hidden/Rive/RenderTexturePrepare"
                 if (_GammaEncode > 0.5)
                 {
                     c.rgb = LinearToGammaSpace(c.rgb);
+                }
+
+                if (_PremultiplyAlpha > 0.5)
+                {
+                    c.rgb *= c.a;
                 }
 
                 return c;

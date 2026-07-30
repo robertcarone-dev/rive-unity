@@ -45,7 +45,7 @@ namespace Rive
         private void SetImage(ImageOutOfBandAsset imageAsset)
         {
 #if RIVE_USING_EXPERIMENTAL
-            // This prevents the image from being overridden by a previously set RenderTexture-backed image.
+            // This prevents the image from being overridden by a previously set texture-backed image.
             if (RenderTextureImageManager.HasAnyBindings)
             {
                 RenderTextureImageManager.Instance.Unbind(this);
@@ -69,10 +69,9 @@ namespace Rive
 
 #if RIVE_USING_EXPERIMENTAL
         /// <summary>
-        /// Binds a RenderTexture-backed image (e.g. video frames, custom GPU
-        /// content) to this property. Pass null to clear.
+        /// Binds a Texture2D- or RenderTexture-backed image to this property. Pass null to clear.
         /// </summary>
-        public void SetFromRenderTextureImageSource(RenderTextureImageSource image)
+        public void SetFromTextureImageSource(TextureImageSource image)
         {
             ThrowIfOwnerDisposed();
             if (image == null)
@@ -85,13 +84,21 @@ namespace Rive
             // re-push, so this only needs to be called once.
             if (!RenderTextureImageManager.Instance.BindPropertyToImage(image, this))
             {
-                DebugLogger.Instance.LogWarning("Failed to bind RenderTexture image.");
+                DebugLogger.Instance.LogWarning("Failed to bind texture image.");
             }
         }
 
         /// <summary>
+        /// Binds a RenderTexture-backed image (e.g. video frames or custom GPU content) to this property. Pass null to clear.
+        /// </summary>
+        public void SetFromRenderTextureImageSource(RenderTextureImageSource image)
+        {
+            SetFromTextureImageSource(image);
+        }
+
+        /// <summary>
         /// Pushes a raw native RenderImage pointer into this property. Used by
-        /// <see cref="RenderTextureImageSource"/> to re-bind its per-frame pointer
+        /// <see cref="TextureImageSource"/> to re-bind its per-frame pointer
         /// without re-attaching. Returns false if the push failed (e.g. owner
         /// disposed) so the per-frame path can stay quiet.
         /// </summary>

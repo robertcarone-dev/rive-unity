@@ -33,14 +33,14 @@ namespace Rive
 
     /// <summary>
     /// Produces a native-ready <see cref="NativeTextureFrame"/> from a Unity
-    /// RenderTexture each frame, optionally flipping or color-correcting.
+    /// texture, optionally correcting orientation, color, and alpha representation.
     /// </summary>
     internal interface ITextureFrameProvider : IDisposable
     {
         /// <summary>
         /// The user's original texture.
         /// </summary>
-        RenderTexture Source { get; }
+        Texture Source { get; }
 
         /// <summary>
         /// Whether the source is still usable (not destroyed or released).
@@ -69,7 +69,7 @@ namespace Rive
         /// <param name="color">Whether to color-correct the texture.</param>
         /// <returns>True when any transform is needed, i.e. we need an intermediate.</returns>
         internal static bool ResolveTransforms(
-            RenderTextureImageSource.TextureProcessingMode mode,
+            TextureImageSource.TextureProcessingMode mode,
             bool backendNeedsFlip,
             bool projectNeedsColorFix,
             out bool flip,
@@ -78,31 +78,47 @@ namespace Rive
             // The mode says which transforms the caller wants; each still only runs
             // when it's actually needed (the backend stores top-down / Linear project).
             bool allowFlip =
-                mode == RenderTextureImageSource.TextureProcessingMode.Auto ||
-                mode == RenderTextureImageSource.TextureProcessingMode.Orientation;
+                mode == TextureImageSource.TextureProcessingMode.Auto ||
+                mode == TextureImageSource.TextureProcessingMode.Orientation;
             bool allowColor =
-                mode == RenderTextureImageSource.TextureProcessingMode.Auto ||
-                mode == RenderTextureImageSource.TextureProcessingMode.Color;
+                mode == TextureImageSource.TextureProcessingMode.Auto ||
+                mode == TextureImageSource.TextureProcessingMode.Color;
 
             flip = allowFlip && backendNeedsFlip;
             color = allowColor && projectNeedsColorFix;
             return flip || color;
         }
 
+        internal static bool ResolveTransforms(
+            RenderTextureImageSource.TextureProcessingMode mode,
+            bool backendNeedsFlip,
+            bool projectNeedsColorFix,
+            out bool flip,
+            out bool color)
+        {
+            return ResolveTransforms((TextureImageSource.TextureProcessingMode)mode, backendNeedsFlip, projectNeedsColorFix, out flip, out color);
+        }
+
         internal static ITextureFrameProvider Create(
-            RenderTexture source,
-            RenderTextureImageSource.TextureProcessingMode mode)
+            Texture source,
+            TextureImageSource.TextureProcessingMode mode)
         {
             bool needsIntermediate = ResolveTransforms(
                 mode,
-                SystemInfo.graphicsUVStartsAtTop,
+                source is RenderTexture && SystemInfo.graphicsUVStartsAtTop,
                 TextureHelper.ProjectNeedsColorSpaceFix,
                 out bool flip,
                 out bool color);
+            bool premultiplyAlpha = mode != TextureImageSource.TextureProcessingMode.None;
 
-            return needsIntermediate
-                ? (ITextureFrameProvider)new ProcessedTextureFrameProvider(source, flip, color)
+            return needsIntermediate || premultiplyAlpha
+                ? (ITextureFrameProvider)new ProcessedTextureFrameProvider(source, flip, color, premultiplyAlpha)
                 : new DirectTextureFrameProvider(source);
+        }
+
+        internal static ITextureFrameProvider Create(RenderTexture source, RenderTextureImageSource.TextureProcessingMode mode)
+        {
+            return Create(source, (TextureImageSource.TextureProcessingMode)mode);
         }
     }
 
@@ -112,18 +128,18 @@ namespace Rive
     /// </summary>
     internal sealed class DirectTextureFrameProvider : ITextureFrameProvider
     {
-        private readonly RenderTexture m_source;
+        private readonly Texture m_source;
 
-        public DirectTextureFrameProvider(RenderTexture source)
+        public DirectTextureFrameProvider(Texture source)
         {
             m_source = source;
         }
 
-        public RenderTexture Source => m_source;
+        public Texture Source => m_source;
 
         // Destroyed (fake-null) or released (GPU backing gone). Either way,
         // the user is done with it and there's nothing to sample.
-        public bool IsSourceAlive => m_source != null && m_source.IsCreated();
+        public bool IsSourceAlive => m_source != null && (!(m_source is RenderTexture renderTexture) || renderTexture.IsCreated());
 
         public NativeTextureFrame Acquire()
         {
@@ -136,7 +152,7 @@ namespace Rive
             {
                 return NativeTextureFrame.Invalid;
             }
-            return new NativeTextureFrame(handle, m_source.width, m_source.height, m_source.sRGB);
+            return new NativeTextureFrame(handle, m_source.width, m_source.height, UnityEngine.Experimental.Rendering.GraphicsFormatUtility.IsSRGBFormat(m_source.graphicsFormat));
         }
 
         public void Dispose() { }
@@ -149,9 +165,10 @@ namespace Rive
     /// </summary>
     internal sealed class ProcessedTextureFrameProvider : ITextureFrameProvider
     {
-        private readonly RenderTexture m_source;
+        private readonly Texture m_source;
         private readonly bool m_flip;
         private readonly bool m_gammaEncode;
+        private readonly bool m_premultiplyAlpha;
 
         private RenderTexture m_intermediate;
         // We own m_intermediate and only swap it on a size change, so its handle is
@@ -161,17 +178,19 @@ namespace Rive
 
         private static readonly int s_flipYId = Shader.PropertyToID("_FlipY");
         private static readonly int s_gammaEncodeId = Shader.PropertyToID("_GammaEncode");
+        private static readonly int s_premultiplyAlphaId = Shader.PropertyToID("_PremultiplyAlpha");
 
-        public ProcessedTextureFrameProvider(RenderTexture source, bool flip, bool gammaEncode)
+        public ProcessedTextureFrameProvider(Texture source, bool flip, bool gammaEncode, bool premultiplyAlpha = false)
         {
             m_source = source;
             m_flip = flip;
             m_gammaEncode = gammaEncode;
+            m_premultiplyAlpha = premultiplyAlpha;
         }
 
-        public RenderTexture Source => m_source;
+        public Texture Source => m_source;
 
-        public bool IsSourceAlive => m_source != null && m_source.IsCreated();
+        public bool IsSourceAlive => m_source != null && (!(m_source is RenderTexture renderTexture) || renderTexture.IsCreated());
 
         public NativeTextureFrame Acquire()
         {
@@ -186,18 +205,14 @@ namespace Rive
             EnsureIntermediate();
 
             Material mat = TextureHelper.TexturePrepareMaterial;
-            if (mat != null)
+            if (mat == null)
             {
-                mat.SetFloat(s_flipYId, m_flip ? 1f : 0f);
-                mat.SetFloat(s_gammaEncodeId, m_gammaEncode ? 1f : 0f);
-                BlitAndRestoreActive(m_source, m_intermediate, mat);
+                throw new InvalidOperationException("The Rive texture preparation shader is required for processed texture image sources.");
             }
-            else
-            {
-                // Shader went missing somehow; keep frame without any transformations.
-                // instead of hard-failing.
-                BlitAndRestoreActive(m_source, m_intermediate, null);
-            }
+            mat.SetFloat(s_flipYId, m_flip ? 1f : 0f);
+            mat.SetFloat(s_gammaEncodeId, m_gammaEncode ? 1f : 0f);
+            mat.SetFloat(s_premultiplyAlphaId, m_premultiplyAlpha ? 1f : 0f);
+            BlitAndRestoreActive(m_source, m_intermediate, mat);
 
             if (m_intermediateHandle == IntPtr.Zero)
             {
@@ -228,15 +243,16 @@ namespace Rive
                 ReleaseIntermediate();
             }
 
-            RenderTextureDescriptor desc = m_source.descriptor;
-            desc.depthBufferBits = 0;
-            desc.msaaSamples = 1;
+            RenderTextureDescriptor desc = TextureHelper.Descriptor(m_source.width, m_source.height);
             // Non-sRGB so our gamma bytes get stored raw and Rive can read them
             // without the hardware decoding them back.
-            desc.graphicsFormat = TextureHelper.Format;
             desc.sRGB = false;
 
-            m_intermediate = new RenderTexture(desc);
+            m_intermediate = new RenderTexture(desc)
+            {
+                filterMode = m_source.filterMode,
+                wrapMode = m_source.wrapMode
+            };
             m_intermediate.Create();
             // Fresh texture so we invalidate the cached handle.
             m_intermediateHandle = IntPtr.Zero;
@@ -252,14 +268,7 @@ namespace Rive
             RenderTexture previousActive = RenderTexture.active;
             try
             {
-                if (material != null)
-                {
-                    Graphics.Blit(source, destination, material);
-                }
-                else
-                {
-                    Graphics.Blit(source, destination);
-                }
+                Graphics.Blit(source, destination, material);
             }
             finally
             {

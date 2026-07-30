@@ -14,7 +14,7 @@ using Object = UnityEngine.Object;
 namespace Rive.Tests
 {
     /// <summary>
-    /// Lifecycle/binding tests for <see cref="RenderTextureImageSource"/> and
+    /// Lifecycle/binding tests for <see cref="TextureImageSource"/> and
     /// <see cref="RenderTextureImageManager"/>.
     /// </summary>
     public class RenderTextureImageSourceTests
@@ -25,8 +25,9 @@ namespace Rive.Tests
         private MockLogger m_mockLogger;
         private TestAssetLoadingManager m_testAssetLoadingManager;
         private List<File> m_loadedFiles;
-        private readonly List<RenderTextureImageSource> m_createdImages = new List<RenderTextureImageSource>();
+        private readonly List<TextureImageSource> m_createdImages = new List<TextureImageSource>();
         private readonly List<RenderTexture> m_createdTextures = new List<RenderTexture>();
+        private readonly List<Texture2D> m_createdTextureAssets = new List<Texture2D>();
 
         private ViewModelInstance m_viewModelInstance;
         private ViewModelInstanceImageProperty m_imageProperty;
@@ -73,6 +74,15 @@ namespace Rive.Tests
             }
             m_createdTextures.Clear();
 
+            foreach (var texture in m_createdTextureAssets)
+            {
+                if (texture != null)
+                {
+                    Object.Destroy(texture);
+                }
+            }
+            m_createdTextureAssets.Clear();
+
             foreach (var file in m_loadedFiles)
             {
                 file.Dispose();
@@ -112,6 +122,14 @@ namespace Rive.Tests
             rt.Create();
             m_createdTextures.Add(rt);
             return rt;
+        }
+
+        private Texture2D CreateTrackUnityTexture2D(int size = 64)
+        {
+            var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            texture.Apply();
+            m_createdTextureAssets.Add(texture);
+            return texture;
         }
 
         private static RenderTextureDescriptor BaseDescriptor(int size = 64)
@@ -180,6 +198,28 @@ namespace Rive.Tests
             m_createdImages.Add(image);
 
             Assert.AreSame(rt, image.Source);
+        }
+
+        [Test]
+        public void Texture2DSource_ReturnsProvidedTexture()
+        {
+            var texture = CreateTrackUnityTexture2D();
+            var image = new TextureImageSource(texture);
+            m_createdImages.Add(image);
+
+            Assert.AreSame(texture, image.Source);
+            Assert.IsInstanceOf<ProcessedTextureFrameProvider>(image.FrameProvider);
+        }
+
+        [Test]
+        public void Texture2DSource_WithNoProcessing_UsesDirectSourceAndWarns()
+        {
+            var texture = CreateTrackUnityTexture2D();
+            var image = new TextureImageSource(texture, TextureImageSource.TextureProcessingMode.None);
+            m_createdImages.Add(image);
+
+            Assert.IsInstanceOf<DirectTextureFrameProvider>(image.FrameProvider);
+            Assert.IsTrue(m_mockLogger.LoggedWarnings.Exists(message => message.Contains("premultiplied alpha")));
         }
 
         [Test]

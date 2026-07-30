@@ -9,19 +9,18 @@ using UnityEngine.Rendering;
 namespace Rive
 {
     /// <summary>
-    /// Wraps a Unity RenderTexture as a Rive RenderImage for binding to a
-    /// view-model image property (VideoPlayer output, camera output, custom
-    /// GPU content).
+    /// Wraps a Unity Texture2D or RenderTexture as a Rive RenderImage for
+    /// binding to a view-model image property.
     /// </summary>
     /// <remarks>
     /// Supported: Metal, D3D11, D3D12, Vulkan. OpenGL safe-fails.
     ///
     /// Requirements:
-    ///   - The source must be a stable user-allocated RenderTexture asset.
-    ///     Transient RenderGraph resources alias their backing memory and
-    ///     will produce stale/garbage samples or crashes.
-    ///   - Single-sample, non-array, 2D textures only. MSAA / array / cube /
-    ///     3D sources are rejected with a log.
+    ///   - RenderTexture sources must be stable user-allocated textures.
+    ///     Transient RenderGraph resources alias their backing memory and will
+    ///     produce stale/garbage samples or crashes.
+    ///   - Texture2D and single-sample, non-array, 2D RenderTexture sources are
+    ///     supported. MSAA / array / cube / 3D sources are rejected.
     ///   - Rive composites through an 8-bit internal RT, so HDR source
     ///     values above 1.0 are clamped at the Rive layer (downstream
     ///     tone-mapping sees the clamped values).
@@ -34,23 +33,23 @@ namespace Rive
     /// Call <see cref="Dispose"/> when you're done to stop updates and free
     /// resources.
     /// </remarks>
-    public sealed class RenderTextureImageSource : IDisposable
+    public class TextureImageSource : IDisposable
     {
         /// <summary>
         /// How much we process a source texture before Rive samples it. Some backends
         /// store a Unity RenderTexture upside-down, and in Linear projects its colors are encoded
-        /// differently than Rive expects.These are opt-in flags; each still only kicks in when
-        /// it's actually needed.
+        /// differently than Rive expects. Processed sources are also converted to the premultiplied
+        /// alpha representation Rive expects.
         /// </summary>
         public enum TextureProcessingMode
         {
-            /// <summary>Determine the processing mode based on the backend and project color space. Handles both orientation and color (each only where needed). Default.</summary>
+            /// <summary>Correct orientation, color encoding, and alpha representation where required. Default.</summary>
             Auto = 0,
-            /// <summary>Flip the texture so it's not upside-down on backends that store texels top-down; leave color alone.</summary>
+            /// <summary>Correct orientation where required and convert to premultiplied alpha without changing color encoding.</summary>
             Orientation = 1,
-            /// <summary>Re-encode the texture to gamma so colors composite correctly in Linear projects; leave orientation alone.</summary>
+            /// <summary>Correct color encoding where required and convert to premultiplied alpha without changing orientation.</summary>
             Color = 2,
-            /// <summary>Bind the texture as-is. No intermediate texture.</summary>
+            /// <summary>Bind the texture as-is with no intermediate texture. The source must already use Rive-compatible orientation, color encoding, and premultiplied alpha.</summary>
             None = 3,
         }
 
@@ -98,21 +97,45 @@ namespace Rive
         /// backends or once the source texture is destroyed/released. The actual
         /// wrap happens on the render thread
         /// </summary>
-        public bool IsValid => !m_disposed && m_textureProvider != null
-            && m_textureProvider.IsSourceAlive
-            && TextureHelper.SupportsRenderTextureImageSource();
+        public bool IsValid => !m_disposed && m_textureProvider.IsSourceAlive && TextureHelper.SupportsTextureImageSource();
 
-        /// <summary>The source RenderTexture this image draws from.</summary>
-        public RenderTexture Source => m_textureProvider?.Source;
+        /// <summary>The source texture this image draws from.</summary>
+        public Texture Source => m_textureProvider.Source;
 
         internal bool IsDisposed => m_disposed;
+
+        /// <param name="source">The Texture2D to use as the image source. Required.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown if <paramref name="source"/> is null.
+        /// </exception>
+        public TextureImageSource(Texture2D source)
+            : this(source, TextureProcessingMode.Auto, RefreshMode.Manual)
+        {
+        }
 
         /// <param name="source">The RenderTexture to use as the image source. Required.</param>
         /// <exception cref="ArgumentNullException">
         /// Thrown if <paramref name="source"/> is null.
         /// </exception>
-        public RenderTextureImageSource(RenderTexture source)
+        public TextureImageSource(RenderTexture source)
             : this(source, TextureProcessingMode.Auto, RefreshMode.PerFrame)
+        {
+        }
+
+        /// <param name="source">The Texture2D to use as the image source. Required.</param>
+        /// <param name="processing">Which processing mode to apply before Rive samples the source.</param>
+        /// <param name="refreshMode">How the image keeps up with source changes.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown if <paramref name="source"/> is null.
+        /// </exception>
+        /// <exception cref="ArgumentException">
+        /// Thrown if <paramref name="source"/> is not a supported 2D texture.
+        /// </exception>
+        public TextureImageSource(
+            Texture2D source,
+            TextureProcessingMode processing = TextureProcessingMode.Auto,
+            RefreshMode refreshMode = RefreshMode.Manual)
+            : this((Texture)source, processing, refreshMode)
         {
         }
 
@@ -125,48 +148,79 @@ namespace Rive
         /// <exception cref="ArgumentException">
         /// Thrown if <paramref name="source"/> is MSAA, an array, a cube, or 3D.
         /// </exception>
-        public RenderTextureImageSource(
+        public TextureImageSource(
             RenderTexture source,
             TextureProcessingMode processing = TextureProcessingMode.Auto,
             RefreshMode refreshMode = RefreshMode.PerFrame)
+            : this((Texture)source, processing, refreshMode)
+        {
+        }
+
+        /// <param name="source">The Texture2D or RenderTexture to use as the image source. Required.</param>
+        /// <param name="processing">Which processing mode to apply before Rive samples the source.</param>
+        /// <param name="refreshMode">How the image keeps up with source changes.</param>
+        /// <exception cref="ArgumentNullException">
+        /// Thrown if <paramref name="source"/> is null.
+        /// </exception>
+        /// <exception cref="ArgumentException">
+        /// Thrown if <paramref name="source"/> is not a supported 2D texture.
+        /// </exception>
+        public TextureImageSource(Texture source, TextureProcessingMode processing, RefreshMode refreshMode)
         {
             if (source == null)
             {
-                throw new ArgumentNullException(
-                    nameof(source),
-                    "RenderTextureImageSource requires a non-null source RenderTexture.");
+                throw new ArgumentNullException(nameof(source), "TextureImageSource requires a non-null source texture.");
+            }
+            if (!Enum.IsDefined(typeof(TextureProcessingMode), processing))
+            {
+                throw new ArgumentOutOfRangeException(nameof(processing), processing, null);
+            }
+            if (!Enum.IsDefined(typeof(RefreshMode), refreshMode))
+            {
+                throw new ArgumentOutOfRangeException(nameof(refreshMode), refreshMode, null);
             }
 
             if (!IsSupportedSource(source, out string reason))
             {
-                throw new ArgumentException(
-                    "RenderTextureImageSource requires a single-sample, non-array, 2D " +
-                    $"RenderTexture. {reason}",
-                    nameof(source));
+                throw new ArgumentException($"TextureImageSource requires a Texture2D or a single-sample, non-array, 2D RenderTexture. {reason}", nameof(source));
             }
             m_textureProvider = TextureFrameProvider.Create(source, processing);
             m_refreshMode = refreshMode;
             m_handle = RenderImageCommandQueue.NextHandle();
             RenderImageCommandQueue.LogUnsupportedBackendOnce();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (processing == TextureProcessingMode.None)
+            {
+                DebugLogger.Instance.LogWarning(
+                    $"TextureImageSource is binding '{source.name}' without preprocessing. " +
+                    "Rive expects premultiplied alpha, and Unity cannot determine the source alpha convention. " +
+                    "Transparent pixels may composite incorrectly unless the source is already Rive-compatible.");
+            }
+#endif
         }
 
         // Mirrors the native shape check (sampleCount/array/type) so an unusable
         // source is caught at construction instead of silently on the render thread.
-        private static bool IsSupportedSource(RenderTexture source, out string reason)
+        private static bool IsSupportedSource(Texture source, out string reason)
         {
+            if (!(source is Texture2D) && !(source is RenderTexture))
+            {
+                reason = $"Source type is {source.GetType().Name}; expected Texture2D or RenderTexture.";
+                return false;
+            }
             if (source.dimension != TextureDimension.Tex2D)
             {
                 reason = $"Source dimension is {source.dimension}; cube, array, and 3D are not supported.";
                 return false;
             }
-            if (source.antiAliasing > 1 || source.descriptor.msaaSamples > 1)
+            if (source is RenderTexture renderTexture && (renderTexture.antiAliasing > 1 || renderTexture.descriptor.msaaSamples > 1))
             {
-                reason = $"Source is MSAA (antiAliasing={source.antiAliasing}).";
+                reason = $"Source is MSAA (antiAliasing={renderTexture.antiAliasing}).";
                 return false;
             }
-            if (source.volumeDepth != 1)
+            if (source is RenderTexture volumeTexture && volumeTexture.volumeDepth != 1)
             {
-                reason = $"Source has volumeDepth={source.volumeDepth}; expected 1.";
+                reason = $"Source has volumeDepth={volumeTexture.volumeDepth}; expected 1.";
                 return false;
             }
             reason = null;
@@ -267,7 +321,55 @@ namespace Rive
             // free here
             RenderTextureImageManager.Instance.Unregister(this);
             // Frees the source's GPU resources.
-            m_textureProvider?.Dispose();
+            m_textureProvider.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Compatibility wrapper for code that specifically works with RenderTexture sources.
+    /// New code can use <see cref="TextureImageSource"/> for both Texture2D and RenderTexture sources.
+    /// </summary>
+    public sealed class RenderTextureImageSource : TextureImageSource
+    {
+        /// <summary>Controls preprocessing applied before Rive samples the RenderTexture.</summary>
+        public new enum TextureProcessingMode
+        {
+            /// <summary>Correct orientation, color encoding, and alpha representation where required. Default.</summary>
+            Auto = 0,
+            /// <summary>Correct orientation where required and convert to premultiplied alpha without changing color encoding.</summary>
+            Orientation = 1,
+            /// <summary>Correct color encoding where required and convert to premultiplied alpha without changing orientation.</summary>
+            Color = 2,
+            /// <summary>Bind the texture as-is. The source must already be Rive-compatible.</summary>
+            None = 3,
+        }
+
+        /// <summary>Controls how the image keeps up with changes to the RenderTexture.</summary>
+        public new enum RefreshMode
+        {
+            /// <summary>Update from the source every frame.</summary>
+            PerFrame = 0,
+            /// <summary>Update only when <see cref="TextureImageSource.Refresh"/> is called.</summary>
+            Manual = 1,
+        }
+
+        /// <summary>The source RenderTexture this image draws from.</summary>
+        public new RenderTexture Source => (RenderTexture)base.Source;
+
+        /// <summary>Creates a RenderTexture-backed Rive image with automatic processing and per-frame refresh.</summary>
+        /// <param name="source">The RenderTexture to use as the image source.</param>
+        public RenderTextureImageSource(RenderTexture source)
+            : base(source)
+        {
+        }
+
+        /// <summary>Creates a RenderTexture-backed Rive image.</summary>
+        /// <param name="source">The RenderTexture to use as the image source.</param>
+        /// <param name="processing">Which processing mode to apply before Rive samples the source.</param>
+        /// <param name="refreshMode">How the image keeps up with source changes.</param>
+        public RenderTextureImageSource(RenderTexture source, TextureProcessingMode processing = TextureProcessingMode.Auto, RefreshMode refreshMode = RefreshMode.PerFrame)
+            : base(source, (TextureImageSource.TextureProcessingMode)processing, (TextureImageSource.RefreshMode)refreshMode)
+        {
         }
     }
 
@@ -422,12 +524,12 @@ namespace Rive
                 return;
             }
             GraphicsDeviceType backend = SystemInfo.graphicsDeviceType;
-            bool supported = TextureHelper.SupportsRenderTextureImageSource();
+            bool supported = TextureHelper.SupportsTextureImageSource();
             if (!supported)
             {
                 s_loggedUnsupportedBackend = true;
                 DebugLogger.Instance.LogError(
-                    "RenderTextureImageSource: binding a RenderTexture as a Rive image is not " +
+                    "TextureImageSource: binding a Unity texture as a Rive image is not " +
                     $"supported on the current graphics backend ({backend}). " +
                     "Supported backends: Metal, Direct3D11, Direct3D12, Vulkan. The bound image " +
                     "property will stay empty on this backend.");
@@ -467,7 +569,7 @@ namespace Rive
     }
 
     /// <summary>
-    /// Owns the <see cref="RenderTextureImageSource"/> to view-model-property bindings
+    /// Owns the <see cref="TextureImageSource"/> to view-model-property bindings
     /// and ticks every bound image once per frame from the Orchestrator.
     /// </summary>
     /// <remarks>
@@ -513,11 +615,11 @@ namespace Rive
         {
             // While an image has bound properties the manager
             // keeps it alive with a strong reference so it keeps ticking without the caller holding it.
-            public readonly RenderTextureImageSource Image;
+            public readonly TextureImageSource Image;
             public readonly List<ViewModelInstanceImageProperty> Properties =
                 new List<ViewModelInstanceImageProperty>();
 
-            public Binding(RenderTextureImageSource image)
+            public Binding(TextureImageSource image)
             {
                 Image = image;
             }
@@ -529,9 +631,9 @@ namespace Rive
         private readonly List<RenderTexture> m_deferredReleases = new List<RenderTexture>();
 
         /// <summary>
-        /// True when at least one render-texture image is currently bound. Lets
+        /// True when at least one texture-backed image is currently bound. Lets
         /// callers skip the manager entirely (no singleton instantiation, no
-        /// iteration) on the common path where nothing uses render textures.
+        /// iteration) on the common path where nothing uses Unity textures.
         /// </summary>
         internal static bool HasAnyBindings =>
             s_instance != null && s_instance.m_bindings.Count > 0;
@@ -540,7 +642,7 @@ namespace Rive
 
         // Removes an image's binding entry outright (e.g. on explicit Dispose),
         // regardless of how many properties it had.
-        internal void Unregister(RenderTextureImageSource image)
+        internal void Unregister(TextureImageSource image)
         {
             if (image == null)
             {
@@ -560,7 +662,7 @@ namespace Rive
         /// is only ever driven by one image, so it is detached from any others. The
         /// image is pushed to the property on the next tick.
         /// </summary>
-        internal bool BindPropertyToImage(RenderTextureImageSource image, ViewModelInstanceImageProperty property)
+        internal bool BindPropertyToImage(TextureImageSource image, ViewModelInstanceImageProperty property)
         {
             if (image == null || property == null)
             {
@@ -657,7 +759,7 @@ namespace Rive
             // callback is a no-op and doesn't mutate the list mid-iteration.
             for (int i = m_bindings.Count - 1; i >= 0; i--)
             {
-                RenderTextureImageSource image = m_bindings[i].Image;
+                TextureImageSource image = m_bindings[i].Image;
                 m_bindings.RemoveAt(i);
                 image?.Dispose();
             }
@@ -718,7 +820,7 @@ namespace Rive
             }
         }
 
-        private int FindBindingIndex(RenderTextureImageSource image)
+        private int FindBindingIndex(TextureImageSource image)
         {
             for (int i = 0; i < m_bindings.Count; i++)
             {
