@@ -140,7 +140,7 @@ namespace Rive.Components
         /// </summary>
         /// <param name="p">The panel to compute the pixel size for.</param>
         /// <returns>The pixel size of the canvas.</returns>
-        private Vector2Int ComputeCanvasPixelSize(IRivePanel p)
+        internal Vector2Int ComputeCanvasPixelSize(IRivePanel p)
         {
             var rt = p.WidgetContainer;
             var canvas = DisplayImage != null ? DisplayImage.canvas : null;
@@ -163,7 +163,7 @@ namespace Rive.Components
         /// </summary>
         /// <param name="p">The panel to compute the draw scale for.</param>
         /// <returns>The draw scale of the canvas.</returns>
-        private Vector2 ComputeCanvasDrawScale(IRivePanel p)
+        internal Vector2 ComputeCanvasDrawScale(IRivePanel p)
         {
             var rt = p.WidgetContainer;
             var canvas = DisplayImage != null ? DisplayImage.canvas : null;

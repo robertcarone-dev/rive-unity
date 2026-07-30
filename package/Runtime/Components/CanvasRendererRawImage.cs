@@ -18,8 +18,8 @@ namespace Rive.Components
             if (m_editorPreviewTexture != previewTexture)
             {
                 m_editorPreviewTexture = previewTexture;
-                // we're using SetAllDirty() to mark the graphic for rebuilding
-                SetAllDirty();
+                // This runs from Canvas.willRenderCanvases, after the normal graphic rebuild. Bind the new texture immediately rather than requesting another Canvas rebuild.
+                UpdateMaterial();
             }
         }
 

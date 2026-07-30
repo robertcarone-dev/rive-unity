@@ -15,7 +15,8 @@ namespace Rive.EditorTools
     {
         private RiveWidget m_widget;
         private ObjectField m_widgetField;
-        private HelpBox m_playModeHelpBox;
+        private Button m_resetButton;
+        private HelpBox m_statusHelpBox;
         private VisualElement m_interactiveContainer;
         private ScrollView m_propertiesScroll;
 
@@ -26,7 +27,6 @@ namespace Rive.EditorTools
         private const double TriggerFiredHighlightSeconds = 0.75d;
         private enum PlaygroundState
         {
-            NotPlaying,
             NoWidget,
             NoFileMetadata,
             NoViewModels,
@@ -73,6 +73,7 @@ namespace Rive.EditorTools
             public void DisposeAll()
             {
                 DisposeCustomViewModelInstance();
+                File?.Dispose();
                 File = null;
             }
         }
@@ -100,11 +101,13 @@ namespace Rive.EditorTools
         {
             private readonly Func<ViewModelInstanceListProperty> m_propertyGetter;
             private readonly Func<ViewModelInstance> m_factory;
+            private readonly Action m_onChanged;
 
-            public ListPropertyAdapter(Func<ViewModelInstanceListProperty> propertyGetter, Func<ViewModelInstance> factory)
+            public ListPropertyAdapter(Func<ViewModelInstanceListProperty> propertyGetter, Func<ViewModelInstance> factory, Action onChanged)
             {
                 m_propertyGetter = propertyGetter;
                 m_factory = factory;
+                m_onChanged = onChanged;
             }
 
             private ViewModelInstanceListProperty Prop => m_propertyGetter?.Invoke();
@@ -169,6 +172,7 @@ namespace Rive.EditorTools
 
                 index = Mathf.Clamp(index, 0, prop.Count);
                 prop.Insert(value, index);
+                m_onChanged?.Invoke();
             }
 
             public void Add(ViewModelInstance item)
@@ -183,6 +187,7 @@ namespace Rive.EditorTools
                 if (toAdd != null)
                 {
                     prop.Add(toAdd);
+                    m_onChanged?.Invoke();
                 }
             }
 
@@ -210,6 +215,7 @@ namespace Rive.EditorTools
                 {
                     prop.RemoveAt(i);
                 }
+                m_onChanged?.Invoke();
             }
 
             public bool Contains(ViewModelInstance item)
@@ -296,6 +302,7 @@ namespace Rive.EditorTools
 
                 index = Mathf.Clamp(index, 0, prop.Count);
                 prop.Insert(toInsert, index);
+                m_onChanged?.Invoke();
             }
 
             void IList.Insert(int index, object value) => Insert(index, value as ViewModelInstance);
@@ -309,6 +316,7 @@ namespace Rive.EditorTools
                 }
 
                 prop.Remove(item);
+                m_onChanged?.Invoke();
                 return true;
             }
 
@@ -323,6 +331,7 @@ namespace Rive.EditorTools
                 }
 
                 prop.RemoveAt(index);
+                m_onChanged?.Invoke();
             }
 
             bool IList.Contains(object value) => Contains(value as ViewModelInstance);
@@ -371,21 +380,57 @@ namespace Rive.EditorTools
             minSize = new Vector2(420, 360);
             BuildLayout();
             EditorApplication.update += EditorUpdate;
+            Selection.selectionChanged += OnSelectionChanged;
+            if (!EditorApplication.isPlaying)
+            {
+                OnSelectionChanged();
+            }
         }
 
         private void OnDisable()
         {
             EditorApplication.update -= EditorUpdate;
+            Selection.selectionChanged -= OnSelectionChanged;
+            RestoreEditorPreviewValues(m_widget);
             ClearTriggerBindings();
             m_propertyBindings.Clear();
             m_listBindings.Clear();
             m_widget = null;
+            ClearTargetCaches();
+            m_viewModelExpansion.Clear();
+        }
+
+        private void ClearTargetCaches()
+        {
             foreach (var selection in m_artboardSelectionCache.Values)
             {
                 selection.DisposeAll();
             }
             m_artboardSelectionCache.Clear();
-            m_viewModelExpansion.Clear();
+            m_imageSelectionCache.Clear();
+        }
+
+        private void OnSelectionChanged()
+        {
+            if (EditorApplication.isPlaying)
+            {
+                return;
+            }
+
+            SetTarget(GetSelectedWidget());
+        }
+
+        internal static RiveWidget GetSelectedWidget()
+        {
+            return Selection.activeGameObject?.GetComponent<RiveWidget>();
+        }
+
+        internal static void RestoreEditorPreviewValues(RiveWidget widget)
+        {
+            if (!EditorApplication.isPlaying)
+            {
+                widget?.SetEditorPreviewDirty();
+            }
         }
 
         private void EditorUpdate()
@@ -431,13 +476,13 @@ namespace Rive.EditorTools
             subtitleRow.Add(docsLink);
             root.Add(subtitleRow);
 
-            m_playModeHelpBox = new HelpBox(
-                "Play with data binding values for the selected RiveWidget while in Play Mode. " +
-                "Changes are applied to the widget's current ViewModel instance.",
+            m_statusHelpBox = new HelpBox(
+                "Play with data binding values for the selected RiveWidget. " +
+                "Changes are applied to the widget's current runtime or editor-preview ViewModel instance.",
                 HelpBoxMessageType.Info);
 
-            m_playModeHelpBox.style.marginBottom = 10;
-            root.Add(m_playModeHelpBox);
+            m_statusHelpBox.style.marginBottom = 10;
+            root.Add(m_statusHelpBox);
 
             m_widgetField = new ObjectField("Widget")
             {
@@ -448,7 +493,21 @@ namespace Rive.EditorTools
             {
                 SetTarget(evt.newValue as RiveWidget);
             });
-            root.Add(m_widgetField);
+            m_widgetField.style.flexGrow = 1;
+
+            m_resetButton = new Button(ResetPlayground)
+            {
+                text = "Reset",
+                tooltip = "Reset the selected widget and restore its component values"
+            };
+            m_resetButton.style.marginLeft = 6;
+
+            var widgetRow = new VisualElement();
+            widgetRow.style.flexDirection = FlexDirection.Row;
+            widgetRow.style.alignItems = Align.FlexEnd;
+            widgetRow.Add(m_widgetField);
+            widgetRow.Add(m_resetButton);
+            root.Add(widgetRow);
 
             m_interactiveContainer = new VisualElement();
             m_interactiveContainer.style.flexDirection = FlexDirection.Column;
@@ -469,12 +528,41 @@ namespace Rive.EditorTools
 
         private void SetTarget(RiveWidget widget)
         {
+            if (!ReferenceEquals(m_widget, widget))
+            {
+                RestoreEditorPreviewValues(m_widget);
+                ClearTargetCaches();
+            }
+
             m_widget = widget;
             m_widgetField?.SetValueWithoutNotify(widget);
             RefreshMetadata();
             RebuildProperties();
             UpdateVisibility();
             RefreshValues();
+        }
+
+        private void ResetPlayground()
+        {
+            if (m_widget == null)
+            {
+                return;
+            }
+
+            ClearTargetCaches();
+            if (EditorApplication.isPlaying)
+            {
+                m_widget.Reload();
+            }
+            else
+            {
+                m_widget.RequestEditorPreviewReload();
+            }
+
+            RebuildProperties();
+            UpdateVisibility();
+            RefreshValues();
+            m_nextRefreshTime = 0d;
         }
 
         private void RefreshMetadata()
@@ -567,6 +655,7 @@ namespace Rive.EditorTools
                 if (prop != null)
                 {
                     prop.Value = evt.newValue;
+                    NotifyValueChanged();
                 }
             });
 
@@ -604,6 +693,7 @@ namespace Rive.EditorTools
                 if (prop != null)
                 {
                     prop.Value = evt.newValue;
+                    NotifyValueChanged();
                 }
             });
 
@@ -641,6 +731,7 @@ namespace Rive.EditorTools
                 if (prop != null)
                 {
                     prop.Value = evt.newValue;
+                    NotifyValueChanged();
                 }
             });
 
@@ -678,6 +769,7 @@ namespace Rive.EditorTools
                 if (prop != null)
                 {
                     prop.Value = evt.newValue;
+                    NotifyValueChanged();
                 }
             });
 
@@ -727,6 +819,7 @@ namespace Rive.EditorTools
                 {
                     m_imageSelectionCache[cacheKey] = null;
                     prop.Value = null;
+                    NotifyValueChanged();
                     return;
                 }
 
@@ -734,6 +827,7 @@ namespace Rive.EditorTools
                 asset.Load();
                 prop.Value = asset;
                 asset.Unload();
+                NotifyValueChanged();
             });
 
             bindingList.Add(new PropertyBinding
@@ -783,6 +877,7 @@ namespace Rive.EditorTools
                 if (prop != null)
                 {
                     prop.Value = evt.newValue;
+                    NotifyValueChanged();
                 }
             });
 
@@ -983,6 +1078,7 @@ namespace Rive.EditorTools
                 if (selection.File == null || string.IsNullOrEmpty(selection.ArtboardName))
                 {
                     prop.Value = null;
+                    NotifyValueChanged();
                     return;
                 }
 
@@ -1017,6 +1113,7 @@ namespace Rive.EditorTools
                 if (bindable != null)
                 {
                     prop.Value = bindable;
+                    NotifyValueChanged();
                 }
             }
 
@@ -1229,6 +1326,10 @@ namespace Rive.EditorTools
                 var instance = instanceProvider();
                 var prop = instance?.GetTriggerProperty(path);
                 prop?.Trigger();
+                if (prop != null)
+                {
+                    NotifyValueChanged();
+                }
             })
             {
                 text = $"Fire Trigger"
@@ -1338,7 +1439,7 @@ namespace Rive.EditorTools
             cacheKey ??= path;
             listBindingList ??= m_listBindings;
             metadataContext ??= m_fileMetadata;
-            viewModelResolver ??= name => string.IsNullOrEmpty(name) ? null : m_widget?.File?.GetViewModelByName(name);
+            viewModelResolver ??= name => string.IsNullOrEmpty(name) ? null : GetCurrentFile()?.GetViewModelByName(name);
 
             var listContainer = new VisualElement();
             listContainer.style.flexDirection = FlexDirection.Column;
@@ -1394,7 +1495,8 @@ namespace Rive.EditorTools
             // Adapter that proxies directly to the live list property to avoid stale counts
             var listAdapter = new ListPropertyAdapter(
                 () => instanceProvider()?.GetListProperty(path),
-                CreateInstanceForList);
+                CreateInstanceForList,
+                NotifyValueChanged);
             listView.itemsSource = listAdapter;
 
             listView.makeItem = () =>
@@ -1594,32 +1696,22 @@ namespace Rive.EditorTools
             var state = GetPlaygroundState(out message);
             bool ready = state == PlaygroundState.Ready;
 
-            if (m_playModeHelpBox != null)
+            if (m_statusHelpBox != null)
             {
-                m_playModeHelpBox.text = message;
-                m_playModeHelpBox.style.display = ready ? DisplayStyle.None : DisplayStyle.Flex;
-            }
-
-            if (m_widgetField != null)
-            {
-                // Only show the widget selector while in Play Mode
-                m_widgetField.style.display = EditorApplication.isPlaying ? DisplayStyle.Flex : DisplayStyle.None;
+                m_statusHelpBox.text = message;
+                m_statusHelpBox.style.display = ready ? DisplayStyle.None : DisplayStyle.Flex;
             }
 
             if (m_interactiveContainer != null)
             {
                 m_interactiveContainer.style.display = ready ? DisplayStyle.Flex : DisplayStyle.None;
             }
+
+            m_resetButton?.SetEnabled(ready);
         }
 
         private PlaygroundState GetPlaygroundState(out string message)
         {
-            if (!EditorApplication.isPlaying)
-            {
-                message = "Enter Play Mode to update values in the widget.";
-                return PlaygroundState.NotPlaying;
-            }
-
             if (m_widget == null)
             {
                 message = "Select a RiveWidget to get started.";
@@ -1650,13 +1742,20 @@ namespace Rive.EditorTools
                 return PlaygroundState.NoDefaultViewModel;
             }
 
-            if (m_widget.Status != WidgetStatus.Loaded || m_widget.StateMachine == null)
+            var stateMachine = GetCurrentStateMachine();
+            if (EditorApplication.isPlaying && (m_widget.Status != WidgetStatus.Loaded || stateMachine == null))
             {
                 message = "Widget is not loaded yet.";
                 return PlaygroundState.WidgetNotLoaded;
             }
 
-            if (m_widget.StateMachine.ViewModelInstance == null)
+            if (!EditorApplication.isPlaying && stateMachine == null)
+            {
+                message = "The selected widget's editor preview is not loaded yet.";
+                return PlaygroundState.WidgetNotLoaded;
+            }
+
+            if (stateMachine.ViewModelInstance == null)
             {
                 message = "No ViewModel instance bound to the state machine.";
                 return PlaygroundState.NoViewModelInstance;
@@ -1746,7 +1845,45 @@ namespace Rive.EditorTools
 
         private ViewModelInstance GetCurrentInstance()
         {
-            return m_widget?.StateMachine?.ViewModelInstance;
+            return GetCurrentStateMachine()?.ViewModelInstance;
+        }
+
+        private File GetCurrentFile()
+        {
+            if (m_widget == null)
+            {
+                return null;
+            }
+
+            if (EditorApplication.isPlaying)
+            {
+                return m_widget.File;
+            }
+
+            return m_widget.TryGetEditorPreviewData(out File file, out _) ? file : null;
+        }
+
+        private StateMachine GetCurrentStateMachine()
+        {
+            if (m_widget == null)
+            {
+                return null;
+            }
+
+            if (EditorApplication.isPlaying)
+            {
+                return m_widget.StateMachine;
+            }
+
+            return m_widget.TryGetEditorPreviewData(out _, out StateMachine stateMachine) ? stateMachine : null;
+        }
+
+        private void NotifyValueChanged()
+        {
+            if (!EditorApplication.isPlaying)
+            {
+                m_widget?.SetEditorPreviewDebugStateDirty();
+            }
         }
 
         private void BuildViewModelSection(
@@ -1766,7 +1903,7 @@ namespace Rive.EditorTools
             bindingList ??= m_propertyBindings;
             listBindingList ??= m_listBindings;
             metadataContext ??= m_fileMetadata;
-            viewModelResolver ??= name => string.IsNullOrEmpty(name) ? null : m_widget?.File?.GetViewModelByName(name);
+            viewModelResolver ??= name => string.IsNullOrEmpty(name) ? null : GetCurrentFile()?.GetViewModelByName(name);
 
             string resolvedDisplayPrefix = displayPathPrefix ?? accessPathPrefix;
             string resolvedCachePrefix = cachePathPrefix ?? accessPathPrefix;
@@ -2087,4 +2224,3 @@ namespace Rive.EditorTools
         }
     }
 }
-

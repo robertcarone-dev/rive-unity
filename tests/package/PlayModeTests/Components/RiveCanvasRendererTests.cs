@@ -154,6 +154,22 @@ namespace Rive.Tests
             }
         }
 
+        [Test]
+        public void CanvasRenderMetrics_IncludeCanvasAndPanelScale()
+        {
+            SetupWithRealPanel();
+
+            m_canvas.scaleFactor = 2.5f;
+            m_realPanel.SetDimensions(new Vector2(200f, 100f));
+            m_realPanel.WidgetContainer.localScale = new Vector3(0.5f, 2f, 1f);
+
+            Vector2Int pixelSize = m_renderer.ComputeCanvasPixelSize(m_realPanel);
+            Vector2 drawScale = m_renderer.ComputeCanvasDrawScale(m_realPanel);
+
+            Assert.AreEqual(new Vector2Int(250, 500), pixelSize);
+            Assert.AreEqual(new Vector2(1.25f, 5f), drawScale);
+        }
+
         [UnityTest]
         public IEnumerator UpdateVisualTarget_UpdatesRawImageProperties()
         {

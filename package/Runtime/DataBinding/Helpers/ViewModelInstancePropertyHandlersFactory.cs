@@ -114,11 +114,10 @@ namespace Rive
 
                     if (isValidIndex)
                     {
-                        string[] enumValues = enumsForFile[(int)result.EnumIndex.Value].ValuesArray;
                         return new ViewModelInstanceEnumProperty(
                             result.PropertyPtr,
                             result.RootViewModelInstance,
-                            enumValues);
+                            enumsForFile[(int)result.EnumIndex.Value]);
                     }
                     else
                     {
